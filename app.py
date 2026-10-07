@@ -7,7 +7,8 @@ import plotly.graph_objects as go
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from urllib.parse import quote_plus
-df = pd.read_csv("sales_data.csv")
+df = pd.read_csv("sales_data.csv", on_bad_lines='skip')
+
 
 st.set_page_config(
     page_title="Sales Prediction Dashboard",
