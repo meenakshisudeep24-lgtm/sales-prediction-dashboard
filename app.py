@@ -47,7 +47,8 @@ else:
     df["InvoiceDate"] = pd.date_range(start="2025-01-01", periods=len(df), freq="ME")
 
 # Fill single cell row nulls safely
-df["InvoiceDate"] = df["InvoiceDate"].fillna(method='ffill').fillna(pd.Timestamp("2025-01-01"))
+df["InvoiceDate"] = df["InvoiceDate"].ffill().fillna(pd.Timestamp("2025-01-01"))
+
 
 # Setup base target fields safely using pandas series templates
 df["TotalAmount"] = pd.to_numeric(df.get("TotalAmount", pd.Series(0, index=df.index)), errors="coerce").fillna(0)
