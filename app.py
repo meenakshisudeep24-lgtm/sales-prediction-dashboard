@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -6,16 +5,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error, mean_squared_error
-from urllib.parse import quote_plus
-import streamlit as st
-import pandas as pd
-import pyodbc
-# ... (your other imports)
-
-
-
-df = pd.read_csv("sales_data.csv", on_bad_lines='skip')
-
 
 st.set_page_config(
     page_title="Sales Prediction Dashboard",
@@ -25,81 +14,45 @@ st.set_page_config(
 )
 
 st.title("📈 Sales Prediction & Future Forecast Dashboard")
-st.caption("Historical sales analysis + machine-learning-style monthly forecasting using your SalesDB.")
+st.caption("Historical sales analysis + machine-learning-style monthly forecasting using embedded CSV.")
 
 # ---------------------------------------------------------------------
-# DATABASE CONNECTION
+# LOAD DATA FROM LOCAL CSV
 # ---------------------------------------------------------------------
-@st.cache_data(ttl=300)
-def load_sales(server, database, username, password, driver):
-    if username:
-        conn_str = (
-            f"DRIVER={{{driver}}};SERVER={server};DATABASE={database};"
-            f"UID={username};PWD={password};TrustServerCertificate=yes;"
-        )
+try:
+    df = pd.read_csv("sales_data.csv", on_bad_lines='skip')
+    
+    # Clean and cast the columns explicitly to guarantee compatibility with your charts
+    if "InvoiceDate" in df.columns:
+        df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"])
     else:
-        conn_str = (
-            f"DRIVER={{{driver}}};SERVER={server};DATABASE={database};"
-            f"Trusted_Connection=yes;TrustServerCertificate=yes;"
-        )
+        # Fallback if your column is named slightly differently
+        date_col = [c for c in df.columns if "date" in c.lower()][0]
+        df["InvoiceDate"] = pd.to_datetime(df[date_col])
+        df = df.rename(columns={date_col: "InvoiceDate"})
+        
+    df["TotalAmount"] = pd.to_numeric(df.get("TotalAmount", 0), errors="coerce").fillna(0)
+    df["Quantity"] = pd.to_numeric(df.get("Quantity", 0), errors="coerce").fillna(0)
+    df["LineTotal"] = pd.to_numeric(df.get("LineTotal", df.get("Sales", df.get("Revenue", 0))), errors="coerce").fillna(0)
+    df["Category"] = df.get("Category", "Unknown").fillna("Unknown")
+    df["ProductName"] = df.get("ProductName", "Unknown").fillna("Unknown")
+    df["InvoiceID"] = df.get("InvoiceID", df.index).fillna(0)
+    df["CustomerID"] = df.get("CustomerID", "Unknown").fillna("Unknown")
 
-    conn = pyodbc.connect(conn_str)
+except Exception as e:
+    st.error("Could not parse the local CSV data file.")
+    st.code(str(e))
+    st.info("Ensure you have a cleanly formatted 'sales_data.csv' file inside your repository.")
+    st.stop()
 
-    query = """
-    SELECT
-        i.InvoiceID,
-        CAST(i.InvoiceDate AS date) AS InvoiceDate,
-        i.CustomerID,
-        i.SalesPersonID,
-        i.TotalAmount,
-        i.PaymentStatus,
-        d.ProductID,
-        p.ProductName,
-        p.Category,
-        d.Quantity,
-        d.UnitPrice,
-        d.DiscountPct,
-        d.LineTotal
-    FROM dbo.Invoice i
-    INNER JOIN dbo.InvoiceDetails d
-        ON i.InvoiceID = d.InvoiceID
-    LEFT JOIN dbo.ProductMaster p
-        ON d.ProductID = p.ProductID
-    ORDER BY i.InvoiceDate;
-    """
-
-    df = pd.read_sql(query, conn)
-    conn.close()
-
-    df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"])
-    df["TotalAmount"] = pd.to_numeric(df["TotalAmount"], errors="coerce").fillna(0)
-    df["Quantity"] = pd.to_numeric(df["Quantity"], errors="coerce").fillna(0)
-    df["LineTotal"] = pd.to_numeric(df["LineTotal"], errors="coerce").fillna(0)
-    df["Category"] = df["Category"].fillna("Unknown")
-    df["ProductName"] = df["ProductName"].fillna("Unknown")
-    return df
-
+if df.empty:
+    st.warning("No sales records were found in the dataset file.")
+    st.stop()
 
 # ---------------------------------------------------------------------
 # SIDEBAR
 # ---------------------------------------------------------------------
 with st.sidebar:
-    st.header("⚙️ Database Settings")
-
-    server = st.text_input("SQL Server", r"localhost\SQLEXPRESS")
-    database = st.text_input("Database", "SalesDB")
-    driver = st.text_input("ODBC Driver", "ODBC Driver 17 for SQL Server")
-
-    auth = st.radio("Authentication", ["Windows", "SQL Server"], index=0)
-
-    username = ""
-    password = ""
-
-    if auth == "SQL Server":
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-
-    st.divider()
     st.header("🔮 Forecast Settings")
 
     forecast_months = st.slider(
@@ -113,29 +66,6 @@ with st.sidebar:
         "Prediction metric",
         ["Sales", "Quantity"],
     )
-
-    st.divider()
-    st.caption("Tip: if your SQL Server is local, try `localhost\\SQLEXPRESS` or `.`.")
-
-
-# ---------------------------------------------------------------------
-# LOAD DATA
-# ---------------------------------------------------------------------
-try:
-    df = load_sales(server, database, username, password, driver)
-except Exception as e:
-    st.error("Could not connect to SQL Server.")
-    st.code(str(e))
-    st.info(
-        "Check the SQL Server name, database name, ODBC driver, and authentication. "
-        "Your uploaded script creates the database as SalesDB."
-    )
-    st.stop()
-
-if df.empty:
-    st.warning("No sales records were found.")
-    st.stop()
-
 
 # ---------------------------------------------------------------------
 # PREPARE MONTHLY DATA
@@ -162,7 +92,6 @@ if len(monthly) < 4:
     st.warning("At least 4 months of historical data are recommended for forecasting.")
     st.stop()
 
-
 # ---------------------------------------------------------------------
 # FORECAST MODEL
 # ---------------------------------------------------------------------
@@ -177,7 +106,6 @@ def make_features(dates):
         "cos12": np.cos(2 * np.pi * month / 12),
         "month": month,
     })
-
 
 def forecast_series(history, periods, target):
     hist = history[["InvoiceDate", target]].copy()
@@ -218,11 +146,9 @@ def forecast_series(history, periods, target):
 
     return model, result
 
-
 target_column = "Sales" if metric == "Sales" else "Quantity"
 
 model, forecast = forecast_series(monthly, forecast_months, target_column)
-
 
 # ---------------------------------------------------------------------
 # MODEL QUALITY / HOLDOUT TEST
@@ -240,7 +166,6 @@ def holdout_score(history, target):
     model = LinearRegression()
     model.fit(X_train, y_train)
 
-    # Keep the original timeline index for the held-out period.
     future_index = np.arange(len(train), len(train) + len(test), dtype=float)
     m = test["InvoiceDate"].dt.month
 
@@ -266,300 +191,34 @@ def holdout_score(history, target):
 
     return mae, rmse, mape
 
-
 scores = holdout_score(monthly, target_column)
 
-
 # ---------------------------------------------------------------------
-# KPI CARDS
+# KPI CARDS & VISUALIZATION RENDERING
 # ---------------------------------------------------------------------
 latest_month = monthly.iloc[-1]
-previous_month = monthly.iloc[-2]
+previous_month = monthly.iloc[-2] if len(monthly) > 1 else latest_month
 
 sales_growth = 0
 if previous_month["Sales"] != 0:
-    sales_growth = (
-        (latest_month["Sales"] - previous_month["Sales"])
-        / abs(previous_month["Sales"])
-    ) * 100
+    sales_growth = ((latest_month["Sales"] - previous_month["Sales"]) / previous_month["Sales"]) * 100
 
-forecast_total = forecast["Predicted"].sum()
+col1, col2, col3 = st.columns(3)
+col1.metric("Current Month Sales", f"${latest_month['Sales']:,.2f}", f"{sales_growth:+.1f}% MoM")
+col2.metric("Monthly Order Items", f"{int(latest_month['Quantity'])}")
+col3.metric("Active Customers", f"{int(latest_month['Customers'])}")
 
-c1, c2, c3, c4 = st.columns(4)
+st.subheader("📊 Forecast Visualization")
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=monthly["InvoiceDate"], y=monthly[target_column], name="Historical Actuals", mode="lines+markers"))
+fig.add_trace(go.Scatter(x=forecast["InvoiceDate"], y=forecast["Predicted"], name="ML Prediction", line=dict(dash="dash", color="orange")))
+fig.update_layout(title=f"Monthly Forward Forecast Plan ({target_column})", xaxis_title="Timeline", yaxis_title=target_column, template="plotly_white")
+st.plotly_chart(fig, use_container_width=True)
 
-with c1:
-    st.metric("Total Sales", f"{monthly['Sales'].sum():,.2f}")
+if scores:
+    st.subheader("🎯 Model Performance Metrics (Holdout Evaluation)")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Mean Absolute Error (MAE)", f"{scores[0]:,.2f}")
+    c2.metric("Root Mean Squared Error (RMSE)", f"{scores[1]:,.2f}")
+    c3.metric("Mean Absolute Percentage Error (MAPE)", f"{scores[2]:.1f}%" if not np.isnan(scores[2]) else "N/A")
 
-with c2:
-    st.metric("Latest Month Sales", f"{latest_month['Sales']:,.2f}", f"{sales_growth:+.1f}%")
-
-with c3:
-    st.metric("Historical Quantity", f"{monthly['Quantity'].sum():,.0f}")
-
-with c4:
-    label = "Forecast Sales" if metric == "Sales" else "Forecast Quantity"
-    st.metric(label, f"{forecast_total:,.0f}")
-
-
-# ---------------------------------------------------------------------
-# TABS
-# ---------------------------------------------------------------------
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📊 Dashboard",
-    "🔮 Future Forecast",
-    "📈 Prediction Analysis",
-    "📋 Data",
-])
-
-
-# ---------------------------------------------------------------------
-# DASHBOARD
-# ---------------------------------------------------------------------
-with tab1:
-    st.subheader("Monthly Sales Trend")
-
-    fig_sales = px.line(
-        monthly,
-        x="InvoiceDate",
-        y="Sales",
-        markers=True,
-        title="Historical Monthly Sales",
-        labels={"InvoiceDate": "Month", "Sales": "Sales"},
-    )
-    fig_sales.update_layout(hovermode="x unified")
-    st.plotly_chart(fig_sales, use_container_width=True, key="historical_sales_chart")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        category = (
-            df.groupby("Category", as_index=False)["LineTotal"]
-              .sum()
-              .sort_values("LineTotal", ascending=False)
-        )
-
-        fig_category = px.bar(
-            category,
-            x="Category",
-            y="LineTotal",
-            title="Sales by Category",
-            labels={"LineTotal": "Sales"},
-        )
-        st.plotly_chart(
-            fig_category,
-            use_container_width=True,
-            key="category_sales_chart",
-        )
-
-    with col2:
-        product = (
-            df.groupby("ProductName", as_index=False)["LineTotal"]
-              .sum()
-              .sort_values("LineTotal", ascending=False)
-              .head(10)
-        )
-
-        fig_product = px.bar(
-            product,
-            x="LineTotal",
-            y="ProductName",
-            orientation="h",
-            title="Top 10 Products by Sales",
-            labels={"LineTotal": "Sales", "ProductName": "Product"},
-        )
-        st.plotly_chart(
-            fig_product,
-            use_container_width=True,
-            key="top_products_chart",
-        )
-
-
-# ---------------------------------------------------------------------
-# FUTURE FORECAST
-# ---------------------------------------------------------------------
-with tab2:
-    st.subheader(f"🔮 Next {forecast_months} Months — {metric} Forecast")
-
-    # Combined historical + forecast chart
-    hist_plot = monthly[["InvoiceDate", target_column]].copy()
-    hist_plot["Type"] = "Historical"
-    hist_plot = hist_plot.rename(columns={target_column: "Value"})
-
-    forecast_plot = forecast.copy()
-    forecast_plot["Type"] = "Predicted"
-    forecast_plot = forecast_plot.rename(columns={"Predicted": "Value"})
-
-    combined = pd.concat([hist_plot, forecast_plot], ignore_index=True)
-
-    fig_forecast = go.Figure()
-
-    fig_forecast.add_trace(
-        go.Scatter(
-            x=hist_plot["InvoiceDate"],
-            y=hist_plot["Value"],
-            mode="lines+markers",
-            name="Historical",
-        )
-    )
-
-    fig_forecast.add_trace(
-        go.Scatter(
-            x=forecast_plot["InvoiceDate"],
-            y=forecast_plot["Value"],
-            mode="lines+markers",
-            name="Forecast",
-            line=dict(dash="dash"),
-        )
-    )
-
-    fig_forecast.update_layout(
-        title=f"Historical vs Future {metric}",
-        xaxis_title="Month",
-        yaxis_title=metric,
-        hovermode="x unified",
-    )
-
-    st.plotly_chart(
-        fig_forecast,
-        use_container_width=True,
-        key="future_forecast_chart",
-    )
-
-    st.subheader("Predicted Future Months")
-
-    display_forecast = forecast.copy()
-    display_forecast["Month"] = display_forecast["InvoiceDate"].dt.strftime("%B %Y")
-    display_forecast[f"Predicted {metric}"] = display_forecast["Predicted"].round(2)
-
-    st.dataframe(
-        display_forecast[["Month", f"Predicted {metric}"]].reset_index(drop=True),
-        use_container_width=True,
-        hide_index=True,
-    )
-
-    csv = display_forecast[["Month", f"Predicted {metric}"]].to_csv(index=False)
-    st.download_button(
-        "⬇️ Download Forecast CSV",
-        csv,
-        file_name="future_sales_forecast.csv",
-        mime="text/csv",
-        key="download_forecast",
-    )
-
-
-# ---------------------------------------------------------------------
-# PREDICTION ANALYSIS
-# ---------------------------------------------------------------------
-with tab3:
-    st.subheader("Prediction Model Analysis")
-
-    if scores is not None:
-        mae, rmse, mape = scores
-
-        a, b, c = st.columns(3)
-        with a:
-            st.metric("MAE", f"{mae:,.2f}")
-        with b:
-            st.metric("RMSE", f"{rmse:,.2f}")
-        with c:
-            st.metric(
-                "MAPE",
-                "N/A" if np.isnan(mape) else f"{mape:.2f}%"
-            )
-
-        st.caption(
-            "Metrics are calculated by training on all but the last 3 historical months "
-            "and testing on those 3 months. They are diagnostic, not a guarantee of future accuracy."
-        )
-    else:
-        st.info("More historical months are needed for the holdout accuracy test.")
-
-    # Actual vs fitted values
-    X_hist = make_features(monthly["InvoiceDate"])[["trend", "sin12", "cos12"]]
-    fitted = np.maximum(model.predict(X_hist), 0)
-
-    prediction_check = pd.DataFrame({
-        "InvoiceDate": monthly["InvoiceDate"],
-        "Actual": monthly[target_column],
-        "Model": fitted,
-    })
-
-    fig_model = go.Figure()
-
-    fig_model.add_trace(
-        go.Scatter(
-            x=prediction_check["InvoiceDate"],
-            y=prediction_check["Actual"],
-            mode="lines+markers",
-            name="Actual",
-        )
-    )
-
-    fig_model.add_trace(
-        go.Scatter(
-            x=prediction_check["InvoiceDate"],
-            y=prediction_check["Model"],
-            mode="lines",
-            name="Model",
-        )
-    )
-
-    fig_model.update_layout(
-        title=f"Actual vs Modelled Monthly {metric}",
-        xaxis_title="Month",
-        yaxis_title=metric,
-        hovermode="x unified",
-    )
-
-    st.plotly_chart(
-        fig_model,
-        use_container_width=True,
-        key="actual_vs_model_chart",
-    )
-
-    st.subheader("Monthly Growth")
-
-    growth = monthly.copy()
-    growth["Growth %"] = growth[target_column].pct_change() * 100
-
-    fig_growth = px.bar(
-        growth,
-        x="InvoiceDate",
-        y="Growth %",
-        title=f"Monthly {metric} Growth",
-        labels={"InvoiceDate": "Month"},
-    )
-    st.plotly_chart(
-        fig_growth,
-        use_container_width=True,
-        key="monthly_growth_chart",
-    )
-
-
-# ---------------------------------------------------------------------
-# DATA
-# ---------------------------------------------------------------------
-with tab4:
-    st.subheader("Sales Data")
-
-    search = st.text_input("Search product/category/customer", key="data_search")
-
-    view = df.copy()
-
-    if search:
-        mask = (
-            view["ProductName"].astype(str).str.contains(search, case=False, na=False)
-            | view["Category"].astype(str).str.contains(search, case=False, na=False)
-            | view["CustomerID"].astype(str).str.contains(search, case=False, na=False)
-        )
-        view = view[mask]
-
-    st.dataframe(view, use_container_width=True, hide_index=True)
-
-    st.download_button(
-        "⬇️ Download Sales Data",
-        view.to_csv(index=False),
-        file_name="sales_dashboard_data.csv",
-        mime="text/csv",
-        key="download_sales_data",
-    )
