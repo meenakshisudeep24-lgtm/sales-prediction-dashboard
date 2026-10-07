@@ -17,7 +17,7 @@ st.title("📈 Sales Prediction & Future Forecast Dashboard")
 st.caption("Historical sales analysis + machine-learning-style monthly forecasting using embedded CSV.")
 
 # ---------------------------------------------------------------------
-# LOAD DATA FROM LOCAL CSV (CLEAN & SEPARATED FROM TRY HOOKS)
+# LOAD DATA FROM LOCAL CSV
 # ---------------------------------------------------------------------
 try:
     df = pd.read_csv("sales_data.csv", on_bad_lines='skip')
@@ -27,69 +27,61 @@ except Exception as e:
     st.info("Ensure you have a cleanly formatted 'sales_data.csv' file inside your repository.")
     st.stop()
 
-# Validate that the file is not empty before parsing columns
 if df.empty:
-    st.warning("No sales records were found in the dataset file.")
+    st.warning("No sales records were found in the dataset file. Loading placeholder framework...")
     st.stop()
 
-# Parse columns safely out of the try block footprint
-if "InvoiceDate" in df.columns:
-    df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"])
-else:
-    date_col = [c for c in df.columns if "date" in c.lower()]
-    if date_col:
-        df["InvoiceDate"] = pd.to_datetime(df[date_col[0]])
-        df = df.rename(columns={date_col[0]: "InvoiceDate"})
-    else:
-        df["InvoiceDate"] = pd.date_range(start="2026-01-01", periods=len(df), freq="D")
+# Locate date column or force generate if invalid
+date_col = None
+for c in df.columns:
+    if "date" in c.lower():
+        date_col = c
+        break
 
-# Handle missing or alternate columns gracefully using robust Pandas Series fallbacks
+if date_col:
+    df["InvoiceDate"] = pd.to_datetime(df[date_col], errors='coerce')
+    # If casting resulted in entirely null values due to bad string formatting, rebuild timeline
+    if df["InvoiceDate"].isna().all():
+        df["InvoiceDate"] = pd.date_range(start="2025-01-01", periods=len(df), freq="ME")
+else:
+    df["InvoiceDate"] = pd.date_range(start="2025-01-01", periods=len(df), freq="ME")
+
+# Fill single cell row nulls safely
+df["InvoiceDate"] = df["InvoiceDate"].fillna(method='ffill').fillna(pd.Timestamp("2025-01-01"))
+
+# Setup base target fields safely using pandas series templates
 df["TotalAmount"] = pd.to_numeric(df.get("TotalAmount", pd.Series(0, index=df.index)), errors="coerce").fillna(0)
 df["Quantity"] = pd.to_numeric(df.get("Quantity", pd.Series(0, index=df.index)), errors="coerce").fillna(0)
 
-# Check for popular sales naming conventions
 sales_fallback = df.get("LineTotal", df.get("Sales", df.get("Revenue", pd.Series(0, index=df.index))))
 df["LineTotal"] = pd.to_numeric(sales_fallback, errors="coerce").fillna(0)
 
+# If everything mapped to zero, look for any column that might hold value metrics
+if (df["LineTotal"] == 0).all():
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    if len(numeric_cols) > 0:
+        df["LineTotal"] = df[numeric_cols[0]]
+
 df["Category"] = df.get("Category", pd.Series("Unknown", index=df.index)).fillna("Unknown")
 df["ProductName"] = df.get("ProductName", pd.Series("Unknown", index=df.index)).fillna("Unknown")
-
-if "InvoiceID" in df.columns:
-    df["InvoiceID"] = df["InvoiceID"].fillna("Unknown")
-else:
-    df["InvoiceID"] = df.index
-    
-if "CustomerID" in df.columns:
-    df["CustomerID"] = df["CustomerID"].fillna("Unknown")
-else:
-    df["CustomerID"] = "Unknown"
-
-    df["CustomerID"] = "Unknown"
+df["InvoiceID"] = df.get("InvoiceID", pd.Series(df.index, index=df.index)).fillna(0)
+df["CustomerID"] = df.get("CustomerID", pd.Series("Unknown", index=df.index)).fillna("Unknown")
 
 # ---------------------------------------------------------------------
 # SIDEBAR
 # ---------------------------------------------------------------------
 with st.sidebar:
     st.header("🔮 Forecast Settings")
-
-    forecast_months = st.slider(
-        "Future months to predict",
-        min_value=1,
-        max_value=24,
-        value=6,
-    )
-
-    metric = st.selectbox(
-        "Prediction metric",
-        ["Sales", "Quantity"],
-    )
+    forecast_months = st.slider("Future months to predict", min_value=1, max_value=24, value=6)
+    metric = st.selectbox("Prediction metric", ["Sales", "Quantity"])
 
 # ---------------------------------------------------------------------
-# PREPARE MONTHLY DATA
+# PREPARE MONTHLY DATA WITH VALIDATED DATETIME INDEX
 # ---------------------------------------------------------------------
+df = df.set_index("InvoiceDate")
+
 monthly = (
-    df.set_index("InvoiceDate")
-      .resample("MS")
+    df.resample("MS")
       .agg(
           Sales=("LineTotal", "sum"),
           Quantity=("Quantity", "sum"),
@@ -101,12 +93,11 @@ monthly = (
 
 monthly["Sales"] = monthly["Sales"].astype(float)
 monthly["Quantity"] = monthly["Quantity"].astype(float)
-
-# Fill missing calendar months so the model sees a continuous time series.
 monthly = monthly.set_index("InvoiceDate").asfreq("MS").fillna(0).reset_index()
 
 if len(monthly) < 4:
-    st.warning("At least 4 months of historical data are recommended for forecasting. Loading template framework configurations...")
+    st.warning("⚠️ At least 4 continuous months of historical metrics are required for forecasting.")
+    st.info("Please expand the dataset context inside your 'sales_data.csv' file on GitHub.")
     st.stop()
 
 # ---------------------------------------------------------------------
@@ -116,7 +107,6 @@ def make_features(dates):
     dates = pd.to_datetime(dates)
     month = dates.dt.month
     t = np.arange(len(dates), dtype=float)
-
     return pd.DataFrame({
         "trend": t,
         "sin12": np.sin(2 * np.pi * month / 12),
@@ -134,12 +124,7 @@ def forecast_series(history, periods, target):
     model = LinearRegression()
     model.fit(X[["trend", "sin12", "cos12"]], y)
 
-    future_dates = pd.date_range(
-        hist["InvoiceDate"].max() + pd.offsets.MonthBegin(1),
-        periods=periods,
-        freq="MS",
-    )
-
+    future_dates = pd.date_range(hist["InvoiceDate"].max() + pd.offsets.MonthBegin(1), periods=periods, freq="MS")
     future_index = np.arange(len(hist), len(hist) + periods, dtype=float)
     future_month = future_dates.month
 
@@ -149,62 +134,14 @@ def forecast_series(history, periods, target):
         "cos12": np.cos(2 * np.pi * future_month / 12),
     })
 
-    pred = model.predict(X_future)
-    pred = np.maximum(pred, 0)
-
-    result = pd.DataFrame({
-        "InvoiceDate": future_dates,
-        "Predicted": pred,
-    })
-
-    return model, result
+    pred = np.maximum(model.predict(X_future), 0)
+    return model, pd.DataFrame({"InvoiceDate": future_dates, "Predicted": pred})
 
 target_column = "Sales" if metric == "Sales" else "Quantity"
 model, forecast = forecast_series(monthly, forecast_months, target_column)
 
 # ---------------------------------------------------------------------
-# MODEL QUALITY / HOLDOUT TEST
-# ---------------------------------------------------------------------
-def holdout_score(history, target):
-    if len(history) < 6:
-        return None
-
-    train = history.iloc[:-3].copy()
-    test = history.iloc[-3:].copy()
-
-    X_train = make_features(train["InvoiceDate"])[["trend", "sin12", "cos12"]]
-    y_train = train[target].values
-
-    model = LinearRegression()
-    model.fit(X_train, y_train)
-
-    future_index = np.arange(len(train), len(train) + len(test), dtype=float)
-    m = test["InvoiceDate"].dt.month
-
-    X_test = pd.DataFrame({
-        "trend": future_index,
-        "sin12": np.sin(2 * np.pi * m / 12),
-        "cos12": np.cos(2 * np.pi * m / 12),
-    })
-
-    pred = np.maximum(model.predict(X_test), 0)
-    actual = test[target].values
-
-    mae = mean_absolute_error(actual, pred)
-    rmse = np.sqrt(mean_squared_error(actual, pred))
-
-    nonzero = actual != 0
-    if nonzero.any():
-        mape = np.mean(np.abs((actual[nonzero] - pred[nonzero]) / actual[nonzero])) * 100
-    else:
-        mape = np.nan
-
-    return mae, rmse, mape
-
-scores = holdout_score(monthly, target_column)
-
-# ---------------------------------------------------------------------
-# KPI CARDS & VISUALIZATION RENDERING
+# KPI CARDS & RENDERING
 # ---------------------------------------------------------------------
 latest_month = monthly.iloc[-1]
 previous_month = monthly.iloc[-2] if len(monthly) > 1 else latest_month
@@ -224,10 +161,3 @@ fig.add_trace(go.Scatter(x=monthly["InvoiceDate"], y=monthly[target_column], nam
 fig.add_trace(go.Scatter(x=forecast["InvoiceDate"], y=forecast["Predicted"], name="ML Prediction", line=dict(dash="dash", color="orange")))
 fig.update_layout(title=f"Monthly Forward Forecast Plan ({target_column})", xaxis_title="Timeline", yaxis_title=target_column, template="plotly_white")
 st.plotly_chart(fig, use_container_width=True)
-
-if scores:
-    st.subheader("🎯 Model Performance Metrics (Holdout Evaluation)")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Mean Absolute Error (MAE)", f"{scores[0]:,.2f}")
-    c2.metric("Root Mean Squared Error (RMSE)", f"{scores[1]:,.2f}")
-    c3.metric("Mean Absolute Percentage Error (MAPE)", f"{scores[2]:.1f}%" if not np.isnan(scores[2]) else "N/A")
