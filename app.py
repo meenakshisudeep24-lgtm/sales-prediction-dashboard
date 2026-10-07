@@ -31,16 +31,39 @@ try:
         df["InvoiceDate"] = pd.to_datetime(df[date_col])
         df = df.rename(columns={date_col: "InvoiceDate"})
         
-    df["TotalAmount"] = pd.to_numeric(df.get("TotalAmount", 0), errors="coerce").fillna(0)
-    df["Quantity"] = pd.to_numeric(df.get("Quantity", 0), errors="coerce").fillna(0)
-    df["LineTotal"] = pd.to_numeric(df.get("LineTotal", df.get("Sales", df.get("Revenue", 0))), errors="coerce").fillna(0)
-    df["Category"] = df.get("Category", "Unknown").fillna("Unknown")
-    df["ProductName"] = df.get("ProductName", "Unknown").fillna("Unknown")
-    df["InvoiceID"] = df.get("InvoiceID", df.index).fillna(0)
-    df["CustomerID"] = df.get("CustomerID", "Unknown").fillna("Unknown")
+       # Clean and cast the columns explicitly to guarantee compatibility with your charts
+    if "InvoiceDate" in df.columns:
+        df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"])
+    else:
+        # Fallback if your column is named slightly differently
+        date_col = [c for c in df.columns if "date" in c.lower()]
+        if date_col:
+            df["InvoiceDate"] = pd.to_datetime(df[date_col[0]])
+            df = df.rename(columns={date_col[0]: "InvoiceDate"})
+        else:
+            # Emergency generation of dates if missing entirely
+            df["InvoiceDate"] = pd.date_range(start="2026-01-01", periods=len(df), freq="D")
+        
+    df["TotalAmount"] = pd.to_numeric(df.get("TotalAmount", pd.Series(0, index=df.index)), errors="coerce").fillna(0)
+    df["Quantity"] = pd.to_numeric(df.get("Quantity", pd.Series(0, index=df.index)), errors="coerce").fillna(0)
+    
+    # Try looking for LineTotal, Sales, or Revenue, defaulting to 0 safely as a Series asset
+    sales_fallback = df.get("LineTotal", df.get("Sales", df.get("Revenue", pd.Series(0, index=df.index))))
+    df["LineTotal"] = pd.to_numeric(sales_fallback, errors="coerce").fillna(0)
+    
+    df["Category"] = df.get("Category", pd.Series("Unknown", index=df.index)).fillna("Unknown")
+    df["ProductName"] = df.get("ProductName", pd.Series("Unknown", index=df.index)).fillna("Unknown")
+    
+    if "InvoiceID" in df.columns:
+        df["InvoiceID"] = df["InvoiceID"].fillna("Unknown")
+    else:
+        df["InvoiceID"] = df.index
+        
+    if "CustomerID" in df.columns:
+        df["CustomerID"] = df["CustomerID"].fillna("Unknown")
+    else:
+        df["CustomerID"] = "Unknown"
 
-except Exception as e:
-    st.error("Could not parse the local CSV data file.")
     st.code(str(e))
     st.info("Ensure you have a cleanly formatted 'sales_data.csv' file inside your repository.")
     st.stop()
