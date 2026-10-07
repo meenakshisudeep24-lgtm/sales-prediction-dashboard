@@ -43,19 +43,16 @@ else:
     else:
         df["InvoiceDate"] = pd.date_range(start="2026-01-01", periods=len(df), freq="D")
 
-df["TotalAmount"] = pd.to_numeric(df.get("TotalAmount", 0), errors="coerce").fillna(0)
-df["Quantity"] = pd.to_numeric(df.get("Quantity", 0), errors="coerce").fillna(0)
+# Handle missing or alternate columns gracefully using robust Pandas Series fallbacks
+df["TotalAmount"] = pd.to_numeric(df.get("TotalAmount", pd.Series(0, index=df.index)), errors="coerce").fillna(0)
+df["Quantity"] = pd.to_numeric(df.get("Quantity", pd.Series(0, index=df.index)), errors="coerce").fillna(0)
 
-sales_fallback = df.get("LineTotal", df.get("Sales", df.get("Revenue", 0)))
+# Check for popular sales naming conventions
+sales_fallback = df.get("LineTotal", df.get("Sales", df.get("Revenue", pd.Series(0, index=df.index))))
 df["LineTotal"] = pd.to_numeric(sales_fallback, errors="coerce").fillna(0)
 
-df["Category"] = df.get("Category", "Unknown")
-if isinstance(df["Category"], pd.Series):
-    df["Category"] = df["Category"].fillna("Unknown")
-
-df["ProductName"] = df.get("ProductName", "Unknown")
-if isinstance(df["ProductName"], pd.Series):
-    df["ProductName"] = df["ProductName"].fillna("Unknown")
+df["Category"] = df.get("Category", pd.Series("Unknown", index=df.index)).fillna("Unknown")
+df["ProductName"] = df.get("ProductName", pd.Series("Unknown", index=df.index)).fillna("Unknown")
 
 if "InvoiceID" in df.columns:
     df["InvoiceID"] = df["InvoiceID"].fillna("Unknown")
@@ -65,6 +62,8 @@ else:
 if "CustomerID" in df.columns:
     df["CustomerID"] = df["CustomerID"].fillna("Unknown")
 else:
+    df["CustomerID"] = "Unknown"
+
     df["CustomerID"] = "Unknown"
 
 # ---------------------------------------------------------------------
