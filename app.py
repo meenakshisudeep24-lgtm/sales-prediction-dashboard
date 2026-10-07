@@ -7,6 +7,20 @@ import plotly.graph_objects as go
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from urllib.parse import quote_plus
+import streamlit as st
+import pandas as pd
+import pyodbc
+# ... (your other imports)
+
+# Try connecting to the database specified in the sidebar
+try:
+    conn = pyodbc.connect(f'DRIVER={odbc_driver};SERVER={server_name};DATABASE={db_name};Trusted_Connection=yes;')
+    df = pd.read_sql("SELECT * FROM your_sales_table", conn)
+except Exception as e:
+    # If local database connection fails (which it will on Streamlit Cloud), read your CSV file fallback
+    st.warning("Could not connect to live SQL Server. Loading fallback dataset instead.")
+    df = pd.read_csv("sales_data.csv")
+
 df = pd.read_csv("sales_data.csv", on_bad_lines='skip')
 
 
