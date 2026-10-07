@@ -17,60 +17,55 @@ st.title("📈 Sales Prediction & Future Forecast Dashboard")
 st.caption("Historical sales analysis + machine-learning-style monthly forecasting using embedded CSV.")
 
 # ---------------------------------------------------------------------
-# LOAD DATA FROM LOCAL CSV
+# LOAD DATA FROM LOCAL CSV (CLEAN & SEPARATED FROM TRY HOOKS)
 # ---------------------------------------------------------------------
 try:
     df = pd.read_csv("sales_data.csv", on_bad_lines='skip')
-    
-    # Clean and cast the columns explicitly to guarantee compatibility with your charts
-    if "InvoiceDate" in df.columns:
-        df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"])
-    else:
-        # Fallback if your column is named slightly differently
-        date_col = [c for c in df.columns if "date" in c.lower()][0]
-        df["InvoiceDate"] = pd.to_datetime(df[date_col])
-        df = df.rename(columns={date_col: "InvoiceDate"})
-        
-       # Clean and cast the columns explicitly to guarantee compatibility with your charts
-    if "InvoiceDate" in df.columns:
-        df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"])
-    else:
-        # Fallback if your column is named slightly differently
-        date_col = [c for c in df.columns if "date" in c.lower()]
-        if date_col:
-            df["InvoiceDate"] = pd.to_datetime(df[date_col[0]])
-            df = df.rename(columns={date_col[0]: "InvoiceDate"})
-        else:
-            # Emergency generation of dates if missing entirely
-            df["InvoiceDate"] = pd.date_range(start="2026-01-01", periods=len(df), freq="D")
-        
-    df["TotalAmount"] = pd.to_numeric(df.get("TotalAmount", pd.Series(0, index=df.index)), errors="coerce").fillna(0)
-    df["Quantity"] = pd.to_numeric(df.get("Quantity", pd.Series(0, index=df.index)), errors="coerce").fillna(0)
-    
-    # Try looking for LineTotal, Sales, or Revenue, defaulting to 0 safely as a Series asset
-    sales_fallback = df.get("LineTotal", df.get("Sales", df.get("Revenue", pd.Series(0, index=df.index))))
-    df["LineTotal"] = pd.to_numeric(sales_fallback, errors="coerce").fillna(0)
-    
-    df["Category"] = df.get("Category", pd.Series("Unknown", index=df.index)).fillna("Unknown")
-    df["ProductName"] = df.get("ProductName", pd.Series("Unknown", index=df.index)).fillna("Unknown")
-    
-    if "InvoiceID" in df.columns:
-        df["InvoiceID"] = df["InvoiceID"].fillna("Unknown")
-    else:
-        df["InvoiceID"] = df.index
-        
-    if "CustomerID" in df.columns:
-        df["CustomerID"] = df["CustomerID"].fillna("Unknown")
-    else:
-        df["CustomerID"] = "Unknown"
-
+except Exception as e:
+    st.error("Could not locate or parse the local CSV data file.")
     st.code(str(e))
     st.info("Ensure you have a cleanly formatted 'sales_data.csv' file inside your repository.")
     st.stop()
 
+# Validate that the file is not empty before parsing columns
 if df.empty:
     st.warning("No sales records were found in the dataset file.")
     st.stop()
+
+# Parse columns safely out of the try block footprint
+if "InvoiceDate" in df.columns:
+    df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"])
+else:
+    date_col = [c for c in df.columns if "date" in c.lower()]
+    if date_col:
+        df["InvoiceDate"] = pd.to_datetime(df[date_col[0]])
+        df = df.rename(columns={date_col[0]: "InvoiceDate"})
+    else:
+        df["InvoiceDate"] = pd.date_range(start="2026-01-01", periods=len(df), freq="D")
+
+df["TotalAmount"] = pd.to_numeric(df.get("TotalAmount", 0), errors="coerce").fillna(0)
+df["Quantity"] = pd.to_numeric(df.get("Quantity", 0), errors="coerce").fillna(0)
+
+sales_fallback = df.get("LineTotal", df.get("Sales", df.get("Revenue", 0)))
+df["LineTotal"] = pd.to_numeric(sales_fallback, errors="coerce").fillna(0)
+
+df["Category"] = df.get("Category", "Unknown")
+if isinstance(df["Category"], pd.Series):
+    df["Category"] = df["Category"].fillna("Unknown")
+
+df["ProductName"] = df.get("ProductName", "Unknown")
+if isinstance(df["ProductName"], pd.Series):
+    df["ProductName"] = df["ProductName"].fillna("Unknown")
+
+if "InvoiceID" in df.columns:
+    df["InvoiceID"] = df["InvoiceID"].fillna("Unknown")
+else:
+    df["InvoiceID"] = df.index
+    
+if "CustomerID" in df.columns:
+    df["CustomerID"] = df["CustomerID"].fillna("Unknown")
+else:
+    df["CustomerID"] = "Unknown"
 
 # ---------------------------------------------------------------------
 # SIDEBAR
@@ -112,7 +107,7 @@ monthly["Quantity"] = monthly["Quantity"].astype(float)
 monthly = monthly.set_index("InvoiceDate").asfreq("MS").fillna(0).reset_index()
 
 if len(monthly) < 4:
-    st.warning("At least 4 months of historical data are recommended for forecasting.")
+    st.warning("At least 4 months of historical data are recommended for forecasting. Loading template framework configurations...")
     st.stop()
 
 # ---------------------------------------------------------------------
@@ -137,7 +132,6 @@ def forecast_series(history, periods, target):
     X = make_features(hist["InvoiceDate"])
     y = hist[target].values
 
-    # Linear trend + yearly seasonality.
     model = LinearRegression()
     model.fit(X[["trend", "sin12", "cos12"]], y)
 
@@ -147,7 +141,6 @@ def forecast_series(history, periods, target):
         freq="MS",
     )
 
-    # Continue trend into the future.
     future_index = np.arange(len(hist), len(hist) + periods, dtype=float)
     future_month = future_dates.month
 
@@ -158,8 +151,6 @@ def forecast_series(history, periods, target):
     })
 
     pred = model.predict(X_future)
-
-    # Sales/quantity cannot be negative.
     pred = np.maximum(pred, 0)
 
     result = pd.DataFrame({
@@ -170,7 +161,6 @@ def forecast_series(history, periods, target):
     return model, result
 
 target_column = "Sales" if metric == "Sales" else "Quantity"
-
 model, forecast = forecast_series(monthly, forecast_months, target_column)
 
 # ---------------------------------------------------------------------
@@ -206,9 +196,7 @@ def holdout_score(history, target):
 
     nonzero = actual != 0
     if nonzero.any():
-        mape = np.mean(
-            np.abs((actual[nonzero] - pred[nonzero]) / actual[nonzero])
-        ) * 100
+        mape = np.mean(np.abs((actual[nonzero] - pred[nonzero]) / actual[nonzero])) * 100
     else:
         mape = np.nan
 
@@ -244,4 +232,3 @@ if scores:
     c1.metric("Mean Absolute Error (MAE)", f"{scores[0]:,.2f}")
     c2.metric("Root Mean Squared Error (RMSE)", f"{scores[1]:,.2f}")
     c3.metric("Mean Absolute Percentage Error (MAPE)", f"{scores[2]:.1f}%" if not np.isnan(scores[2]) else "N/A")
-
