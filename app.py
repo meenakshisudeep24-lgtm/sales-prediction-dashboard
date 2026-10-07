@@ -15,7 +15,7 @@ import pyodbc
 # Try connecting to the database specified in the sidebar
 try:
     conn = pyodbc.connect(f'DRIVER={odbc_driver};SERVER={server_name};DATABASE={db_name};Trusted_Connection=yes;')
-    df = pd.read_sql("SELECT * FROM your_sales_table", conn)
+    df = pd.read_csv("sales_data.csv")
 except Exception as e:
     # If local database connection fails (which it will on Streamlit Cloud), read your CSV file fallback
     st.warning("Could not connect to live SQL Server. Loading fallback dataset instead.")
