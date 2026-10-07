@@ -1,0 +1,9 @@
+import pandas as pd
+import pyodbc
+
+# Connect locally using your working connection string
+conn = pyodbc.connect('DRIVER={ODBC Driver 17 for SQL Server};SERVER=YOUR_LOCAL_SERVER;DATABASE=SalesDB;Trusted_Connection=yes;')
+df = pd.read_sql("SELECT * FROM your_sales_table", conn)
+
+# Save it to your project folder
+df.to_csv('sales_data.csv', index=False)
