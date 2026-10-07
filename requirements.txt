@@ -2,3 +2,4 @@ streamlit
 plotly
 pandas
 scikit-learn
+pyodbc
