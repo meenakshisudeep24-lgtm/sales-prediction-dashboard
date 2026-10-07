@@ -1,9 +1,6 @@
-import pandas as pd
-import pyodbc
-
-# Connect locally using your working connection string
-conn = pyodbc.connect('DRIVER={ODBC Driver 17 for SQL Server};SERVER=YOUR_LOCAL_SERVER;DATABASE=SalesDB;Trusted_Connection=yes;')
-df = pd.read_sql("SELECT * FROM your_sales_table", conn)
-
-# Save it to your project folder
-df.to_csv('sales_data.csv', index=False)
+Date,Product,Sales,Revenue
+2026-01-01,Product A,150,3000
+2026-01-02,Product B,90,1800
+2026-01-03,Product A,120,2400
+2026-01-04,Product C,200,5000
+2026-01-05,Product B,110,2200
